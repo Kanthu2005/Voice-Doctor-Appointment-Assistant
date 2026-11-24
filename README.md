@@ -1,241 +1,382 @@
-# Voice Doctor Appointment Assistant
+# Voice AI Doctor Appointment Assistant (CareFlow AI)
 
-A real-time voice-based doctor appointment booking system built with Pipecat (Python) for the voice pipeline and React + Vite + Tailwind CSS for the frontend dashboard.
+A real-time, voice-powered doctor appointment assistant and clinical scheduling dashboard built with **FastAPI**, **Pipecat**, **Google Gemini**, **ElevenLabs STT/TTS**, **SQLite**, and **React + TypeScript + Tailwind CSS**.
+
+---
+
+## Table of Contents
+
+- [Project Overview](#project-overview)
+- [Features](#features)
+- [Technology Stack](#technology-stack)
+- [Architecture](#architecture)
+- [Voice Pipeline Explanation](#voice-pipeline-explanation)
+- [Database Design](#database-design)
+- [API Documentation](#api-documentation)
+- [Project Folder Structure](#project-folder-structure)
+- [Installation & Environment Setup](#installation--environment-setup)
+- [Running the Application](#running-the-application)
+- [Testing Instructions](#testing-instructions)
+- [Documentation](#documentation)
+
+---
+
+## Project Overview
+
+Patients can interact directly with **Maya**, an AI medical receptionist, through a live browser phone-call interface (`WebSocket /ws/voice`). Using natural speech, callers can inquire about doctor availability by speciality or date, book appointments after explicit phone number confirmation, and cancel existing bookings—with all state changes persisted atomically in **SQLite** and reflected immediately on the clinical dashboard.
+
+---
 
 ## Features
 
-### Voice Pipeline (Pipecat)
-- Real-time voice interaction with STT → LLM → TTS pipeline
-- Function calling for:
-  - Check doctor availability
-  - Book appointments
-  - Cancel appointments
-- Caller identified only by phone number spoken during the call
-- Natural language conversation flow
+### Voice AI Assistant (Pipecat + ElevenLabs + Gemini)
+- Real-time bidirectional browser audio streaming over WebSocket (`16 kHz` mono Int16 PCM).
+- Voice Activity Detection (**Silero VAD**) for natural turn-taking and barge-in interruption handling.
+- Streaming Speech-to-Text (**ElevenLabs Realtime STT**) and natural Text-to-Speech (**ElevenLabs TTS**).
+- Conversational reasoning and function calling (**Google Gemini**) backed directly by SQLite:
+  - `check_doctor_availability`
+  - `book_appointment`
+  - `cancel_appointment`
+- Strict conversation safeguards:
+  - Identifies callers solely by spoken phone number (stored as string to preserve leading zeros and country codes).
+  - Repeats the complete phone number and requires explicit confirmation before booking or cancelling.
+  - Prompts selection and confirmation when multiple active appointments exist for a caller.
+  - Queries live SQLite availability rather than inventing slots.
 
-### Frontend Dashboard
-- Clean, professional interface
-- Doctor availability listing with specialties and time slots
-- Real-time appointments list with status updates
-- Interactive call interface with:
-  - Phone-style call screen (ringing/connecting/connected/ended states)
-  - Live transcript display
-  - Call timer
-  - Mute/End call buttons
-- Responsive design (mobile-friendly)
+### Healthcare SaaS Dashboard (React + TypeScript)
+- **Overview:** Live KPI cards (Total Doctors, Total Appointments, Available Slots, Cancelled Appointments), Recharts speciality capacity and appointment-by-date analytics, and Recent Activity feed.
+- **Voice Assistant Console:** Phone-style call UI with Start/End Call, Mute/Unmute microphone, live call timer, connection status (`Idle`, `Connecting`, `Connected`, `Muted`, `Ending`, `Ended`, `Error`), AI assistant avatar, real-time RMS audio waveform, live transcript, and automatic booking/cancellation confirmation cards.
+- **Doctors:** Searchable specialist cards with qualification, experience, consultation fee, working days, dynamic date/speciality slot filtering, and direct slot booking modal.
+- **Appointments:** Filterable ledger displaying Appointment ID, privacy-masked patient phone number, doctor, date, time, status pill, and one-click cancellation with slot release.
+- **Settings:** Application diagnostics, voice provider readiness, and clinic/auto-refresh preferences.
 
-## Tech Stack
+---
+
+## Technology Stack
 
 ### Backend
-- **Framework**: Pipecat + FastAPI
-- **STT**: ElevenLabs (or OpenAI Whisper)
-- **LLM**: Google Gemini (with function calling)
-- **TTS**: ElevenLabs
-- **VAD**: Silero VAD (bonus)
-- **Data**: JSON file storage (can be swapped for SQLite)
+- **API Framework:** Python 3.14, FastAPI (`0.165.0`), Uvicorn (`0.54.0`), Pydantic v2
+- **Voice Orchestration:** Pipecat (`pipecat-ai[google,websocket] 1.17.0`), Silero VAD (`onnxruntime`)
+- **Speech-to-Text / Text-to-Speech:** ElevenLabs Realtime STT (`scribe_v2_realtime`) & ElevenLabs TTS (`eleven_turbo_v2_5`)
+- **LLM:** Google Gemini (`google-genai 3.6.1`, `gemini-2.5-flash`) with function calling
+- **Database:** SQLite with SQLAlchemy 2.1 (`asyncio` + `aiosqlite` + `greenlet`)
 
 ### Frontend
-- **Framework**: React + Vite + TypeScript
-- **Styling**: Tailwind CSS
-- **State**: React Context API
+- **UI Framework:** React 19, TypeScript, Vite 6
+- **Styling & Motion:** Tailwind CSS 3, Lucide React, Framer Motion
+- **Charts:** Recharts 3
 
-## Project Structure
+---
 
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Browser["Frontend (React + Vite + TypeScript)"]
+        UI["Dashboard & Call Console\n(Overview, Voice, Doctors, Appointments, Settings)"]
+        Audio["Web Audio Engine\n(16 kHz PCM16 Capture & Playback)"]
+        API["Typed REST & WS Client\n(src/services/api.ts)"]
+        UI --> Audio
+        UI --> API
+    end
+
+    subgraph Backend["Backend (FastAPI + Python)"]
+        Routes["REST Routes (/api/*)\n& WebSocket (/ws/voice)"]
+        Voice["Pipecat Voice Pipeline\n(Silero VAD -> ElevenLabs STT -> Gemini -> ElevenLabs TTS)"]
+        AI["AI Tool Handlers\n(app/ai/tools.py)"]
+        Services["Shared Service Layer\n(doctor, appointment, dashboard)"]
+        DB["SQLAlchemy AsyncSession"]
+
+        Routes --> Services
+        Routes --> Voice
+        Voice -->|Function Calls| AI
+        AI --> Services
+        Services --> DB
+    end
+
+    subgraph Storage["Persistence"]
+        SQLite[("SQLite\n(appointments.db)")]
+    end
+
+    subgraph External["External AI Services"]
+        EL_STT["ElevenLabs Realtime STT"]
+        Gemini["Google Gemini LLM"]
+        EL_TTS["ElevenLabs TTS"]
+    end
+
+    API -->|"HTTP / JSON"| Routes
+    Audio <-->|"WebSocket (PCM16 + JSON Events)"| Routes
+    DB --> SQLite
+    Voice <--> EL_STT
+    Voice <--> Gemini
+    Voice <--> EL_TTS
 ```
-voice-doctor-assistant/
-├── backend/
-│   ├── main.py              # FastAPI REST API
-│   ├── bot.py               # Pipecat voice pipeline
-│   ├── database.py          # Data layer (JSON file)
-│   ├── data/
-│   │   └── db.json          # Mock data (doctors, slots, appointments)
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx          # Main app component
-│   │   ├── AppContext.tsx   # Global state management
-│   │   ├── main.tsx         # Entry point
-│   │   ├── components/
-│   │   │   ├── CallModal.tsx      # Phone-style call interface
-│   │   │   ├── DoctorsList.tsx    # Doctors availability display
-│   │   │   └── AppointmentsList.tsx # Appointments display
-│   │   └── index.css        # Tailwind imports
-│   ├── package.json
-│   ├── tailwind.config.js
-│   └── vite.config.ts
+
+---
+
+## Voice Pipeline Explanation
+
+The real-time audio loop flows through Pipecat as follows:
+
+`User Microphone` → `BrowserAudioJsonSerializer` → `Silero VAD` → `ElevenLabs STT` → `Google Gemini LLM` → `Function Calling (SQLite)` → `ElevenLabs TTS` → `User Speaker`
+
+- **Audio In:** The browser captures microphone audio via `AudioWorkletNode`, downsamples to `16 kHz` mono Int16 PCM, and streams binary frames over `/ws/voice`.
+- **VAD & STT:** `SileroVADAnalyzer` detects speech boundaries while `ElevenLabsRealtimeSTTService` produces interim and final transcripts.
+- **LLM & Tools:** `GoogleLLMService` maintains conversation history inside `LLMContext` and executes `check_doctor_availability`, `book_appointment`, and `cancel_appointment` against SQLite.
+- **TTS & Audio Out:** Gemini's response streams to `ElevenLabsTTSService`, emitting `16 kHz` PCM16 audio frames and JSON transcript/appointment events back to the browser.
+
+For full frame-level details, see [docs/PIPELINE_DESCRIPTION.md](docs/PIPELINE_DESCRIPTION.md).
+
+---
+
+## Database Design
+
+SQLite enforces foreign keys (`PRAGMA foreign_keys = ON`) across three relational tables:
+
+```mermaid
+erDiagram
+    DOCTORS ||--o{ SLOTS : "has scheduled"
+    DOCTORS ||--o{ APPOINTMENTS : "receives"
+    SLOTS ||--o{ APPOINTMENTS : "reserved by"
+
+    DOCTORS {
+        int id PK
+        string name UK
+        string speciality
+        string qualification
+        int experience
+        float consultation_fee
+        string available_days
+    }
+
+    SLOTS {
+        int id PK
+        int doctor_id FK
+        date appointment_date
+        string appointment_time
+        string status "available | booked"
+    }
+
+    APPOINTMENTS {
+        int id PK
+        string patient_phone "string preserving + and leading 0s"
+        int doctor_id FK
+        int slot_id FK
+        date appointment_date
+        string appointment_time
+        string status "booked | cancelled"
+        datetime created_at
+    }
+```
+
+- **Double-booking protection:** Atomic `UPDATE slots SET status='booked' WHERE id=:slot_id AND status='available'` combined with a partial unique index `uq_active_appointment_per_slot` on `appointments(slot_id)` where `status='booked'`.
+- **Slot release:** Cancelling an appointment updates `appointments.status='cancelled'` and `slots.status='available'` in a single database transaction.
+- **Seed data:** Automatically seeds 6 doctors (`Cardiology`, `Dermatology`, `Neurology`, `Orthopaedics`, `General Medicine`, `Paediatrics`) and 7 days of working-day slots on startup if empty.
+
+---
+
+## API Documentation
+
+Interactive Swagger UI is available at `http://localhost:8000/docs` (ReDoc at `http://localhost:8000/redoc`).
+
+| Method & Endpoint | Description | Status Codes |
+| --- | --- | --- |
+| `GET /api/health` | Service status and SQLite connectivity check | `200`, `503` |
+| `GET /api/doctors` | List doctors (optional `?speciality=...`) | `200` |
+| `GET /api/doctors/{doctor_id}` | Doctor profile with all scheduled slots | `200`, `404` |
+| `GET /api/availability` | Open slots filtered by `doctor_id`, `doctor_name`, `speciality`, `appointment_date` | `200`, `404` |
+| `GET /api/appointments` | List appointments (`patient_phone`, `doctor_id`, `status`, `appointment_date`) | `200`, `422` |
+| `POST /api/appointments` | Book slot via `slot_id` or `(doctor_id, appointment_date, appointment_time)` | `201`, `404`, `409`, `422` |
+| `POST /api/appointments/{id}/cancel` | Cancel appointment and release its slot | `200`, `404`, `409` |
+| `GET /api/dashboard/stats` | Aggregated clinic metrics & speciality breakdown | `200` |
+| `GET /api/voice/status` | Voice provider readiness (no secrets exposed) | `200` |
+| `WS /ws/voice` | Real-time Pipecat WebSocket voice transport | WebSocket |
+
+---
+
+## Project Folder Structure
+
+```text
+voice-ai-doctor-assistant/
 ├── .env.example
-└── README.md
+├── .gitignore
+├── README.md
+├── docs/
+│   ├── PIPELINE_DESCRIPTION.md
+│   └── PROJECT_ARCHITECTURE.md
+├── backend/
+│   ├── .env.example
+│   ├── requirements.txt
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── ai/
+│   │   │   ├── gemini_assistant.py
+│   │   │   ├── prompts.py
+│   │   │   └── tools.py
+│   │   ├── core/
+│   │   │   ├── config.py
+│   │   │   └── exceptions.py
+│   │   ├── db/
+│   │   │   ├── database.py
+│   │   │   └── seed.py
+│   │   ├── models/
+│   │   │   └── domain.py
+│   │   ├── routes/
+│   │   │   ├── appointments.py
+│   │   │   ├── availability.py
+│   │   │   ├── dashboard.py
+│   │   │   ├── doctors.py
+│   │   │   ├── health.py
+│   │   │   └── voice.py
+│   │   ├── schemas/
+│   │   │   ├── appointment.py
+│   │   │   ├── dashboard.py
+│   │   │   ├── doctor.py
+│   │   │   ├── error.py
+│   │   │   └── health.py
+│   │   ├── services/
+│   │   │   ├── appointment_service.py
+│   │   │   ├── dashboard_service.py
+│   │   │   └── doctor_service.py
+│   │   └── voice/
+│   │       ├── pipeline.py
+│   │       ├── processors.py
+│   │       ├── serializer.py
+│   │       └── tools.py
+│   └── tests/
+│       ├── test_ai_tools_and_gemini.py
+│       ├── test_database_and_services.py
+│       ├── test_end_to_end_workflows.py
+│       ├── test_rest_api.py
+│       └── test_voice_pipeline.py
+└── frontend/
+    ├── .env.example
+    ├── index.html
+    ├── package.json
+    ├── postcss.config.js
+    ├── tailwind.config.js
+    ├── tsconfig.json
+    ├── vite.config.ts
+    └── src/
+        ├── App.tsx
+        ├── index.css
+        ├── main.tsx
+        ├── components/
+        │   ├── common/
+        │   ├── doctors/
+        │   ├── layout/
+        │   └── voice/
+        ├── config/
+        │   └── defaults.ts
+        ├── hooks/
+        │   ├── useClinicData.ts
+        │   └── useVoiceAssistant.ts
+        ├── pages/
+        │   ├── AppointmentsPage.tsx
+        │   ├── DoctorsPage.tsx
+        │   ├── OverviewPage.tsx
+        │   ├── SettingsPage.tsx
+        │   └── VoiceAssistantPage.tsx
+        ├── services/
+        │   └── api.ts
+        ├── types/
+        │   └── index.ts
+        └── utils/
+            ├── audio.ts
+            └── format.ts
 ```
 
-## Setup Instructions
+---
+
+## Installation & Environment Setup
 
 ### Prerequisites
-- Python 3.10+
-- Node.js 18+
-- ElevenLabs API key (for STT/TTS)
-- Google Gemini API key (for LLM)
+- Python 3.11+ (tested on Python 3.14.2)
+- Node.js 20+ and npm
+- Google Gemini API key
+- ElevenLabs API key and Voice ID
 
-### Backend Setup
+### 1. Configure Environment Variables
+Create `backend/.env` from `backend/.env.example`:
 
-1. Navigate to backend directory:
-   ```bash
-   cd backend
-   ```
+```bash
+cp backend/.env.example backend/.env
+```
 
-2. Create a virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Create `.env` file from example:
-   ```bash
-   cp ../.env.example .env
-   # Edit .env and add your API keys
-   ```
-
-5. Start the FastAPI server:
-   ```bash
-   uvicorn main:app --host 0.0.0.0 --port 8001 --reload
-   ```
-
-6. (Optional) Start the Pipecat voice pipeline:
-   ```bash
-   python bot.py
-   ```
-
-### Frontend Setup
-
-1. Navigate to frontend directory:
-   ```bash
-   cd frontend
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
-
-4. Open http://localhost:5175 in your browser
-
-## Environment Variables
-
-Create a `.env` file in the backend directory with:
+Set your credentials inside `backend/.env` (never commit `.env` files):
 
 ```env
-ELEVENLABS_API_KEY=your_elevenlabs_api_key
-GEMINI_API_KEY=your_gemini_api_key
-# OPENAI_API_KEY=your_openai_api_key  # Alternative LLM
+GEMINI_API_KEY=your_google_gemini_api_key_here
+GEMINI_MODEL=gemini-2.5-flash
+
+ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
+ELEVENLABS_VOICE_ID=your_elevenlabs_voice_id_here
+ELEVENLABS_STT_MODEL=scribe_v2_realtime
+ELEVENLABS_TTS_MODEL=eleven_turbo_v2_5
 ```
 
-## API Endpoints
+Optionally create `frontend/.env` from `frontend/.env.example` (defaults to `http://localhost:8000` and `ws://localhost:8000`).
 
-### GET `/api/doctors`
-Returns list of all doctors with their available slots.
-
-### GET `/api/availability?doctor_name=...&date=...`
-Returns available slots for a specific doctor and/or date.
-
-### GET `/api/appointments`
-Returns all appointments (active and cancelled).
-
-### POST `/api/book`
-Books an appointment.
-```json
-{
-  "phone_number": "+15551234567",
-  "doctor_name": "Dr. Sarah Smith",
-  "slot": "2026-11-25 10:00 AM"
-}
-```
-
-### POST `/api/cancel`
-Cancels an appointment by phone number.
-```json
-{
-  "phone_number": "+15551234567"
-}
-```
-
-## Voice Pipeline Architecture
-
-The Pipecat pipeline follows this flow:
-
-```
-Caller Audio → VAD → STT (ElevenLabs) → LLM (Gemini) → TTS (ElevenLabs) → Caller Audio
-```
-
-The LLM has three registered functions:
-1. `check_doctor_availability(doctor_name, date?)` - Returns available slots
-2. `book_appointment(phone_number, doctor_name, slot)` - Books appointment after confirming phone number
-3. `cancel_appointment(phone_number)` - Cancels existing appointment
-
-### System Prompt
-The LLM is instructed to:
-- Identify callers ONLY by phone number spoken during the call
-- Read back the phone number to confirm before booking/cancelling
-- Speak naturally and handle all three actions end-to-end
-
-## Mock Data
-
-The system comes with pre-configured mock data:
-- **Dr. Sarah Smith** - General Practitioner
-- **Dr. Michael Chen** - Cardiologist  
-- **Dr. Emily Rodriguez** - Pediatrician
-
-Each doctor has 3 available time slots across Nov 25-26, 2026.
-
-## Development
-
-### Running Tests
+### 2. Backend Installation
 ```bash
-# Backend
-cd backend && python -m pytest
+cd backend
+python -m venv .venv
 
-# Frontend
-cd frontend && npm test
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+# macOS / Linux
+# source .venv/bin/activate
+
+pip install -r requirements.txt
 ```
 
-### Building for Production
+### 3. Frontend Installation
 ```bash
-# Frontend
-cd frontend && npm run build
+cd frontend
+npm install
 ```
 
-## Submission Requirements
+---
 
-This project fulfills the SDE Intern Round 1 Assignment requirements:
+## Running the Application
 
-1. ✅ GitHub repository with complete code
-2. ✅ README with run instructions
-3. ✅ `.env.example` file (no API keys committed)
-3. ✅ Voice pipeline with Pipecat, ElevenLabs STT/TTS, Gemini LLM
-4. ✅ Frontend dashboard with call interface, transcript, doctors list, appointments
-5. ✅ Phone-style call screen with states, timer, mute, end-call
-6. ✅ Live transcript, audio waveform (visual)
-7. ✅ Doctor availability and appointment management
+### Start Backend (FastAPI + Pipecat)
+```bash
+cd backend
+# Windows PowerShell (using venv directly):
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+- API & Health Check: `http://localhost:8000/api/health`
+- Swagger Documentation: `http://localhost:8000/docs`
+- Voice WebSocket: `ws://localhost:8000/ws/voice`
 
-## Pipeline Description
+### Start Frontend (React + Vite)
+```bash
+cd frontend
+npm run dev
+```
+- Dashboard URL: `http://localhost:5173`
 
-The voice pipeline uses Pipecat to orchestrate real-time audio processing:
-1. **VAD (Voice Activity Detection)**: Detects when the caller is speaking
-2. **STT (Speech-to-Text)**: ElevenLabs converts audio to text
-3. **LLM (Language Model)**: Google Gemini processes the text with function calling
-4. **TTS (Text-to-Speech)**: ElevenLabs converts LLM response to audio
-5. **Transport**: WebSocket for browser integration
+---
 
-The LLM has three function-calling tools that interact with the FastAPI backend to check availability, book, and cancel appointments. The system identifies callers solely by the phone number they speak during the conversation.
+## Testing Instructions
 
-## License
+### Backend & Voice Pipeline Unit/Integration Tests
+```bash
+cd backend
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+Covers SQLite schema & seeding, relationships, phone string canonicalization, REST APIs, double-booking prevention, slot release, Gemini tool-calling loop, Pipecat pipeline assembly, Silero VAD, serializer roundtrip, and end-to-end booking/cancellation workflows (`19` tests).
 
-MIT
+### Frontend Typecheck & Production Build
+```bash
+cd frontend
+npm run lint
+npm run build
+```
+
+---
+
+## Documentation
+- [System Architecture](docs/PROJECT_ARCHITECTURE.md)
+- [Voice Pipeline Description](docs/PIPELINE_DESCRIPTION.md)
