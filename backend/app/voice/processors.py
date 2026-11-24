@@ -80,13 +80,23 @@ class TranscriptBridgeProcessor(FrameProcessor):
                     )
                 )
         elif isinstance(frame, ErrorFrame):
-            logger.error(f"Pipecat pipeline error: {frame.error} (fatal={frame.fatal})")
+            lower_err = frame.error.lower()
+            is_fatal = frame.fatal or any(
+                marker in lower_err
+                for marker in (
+                    "authenticated",
+                    "api key",
+                    "policy violation",
+                    "connection failed 3 times",
+                )
+            )
+            logger.error(f"Pipecat pipeline error: {frame.error} (fatal={is_fatal})")
             await self.push_frame(
                 OutputTransportMessageUrgentFrame(
                     message={
                         "type": "error",
                         "message": frame.error,
-                        "fatal": frame.fatal,
+                        "fatal": is_fatal,
                     }
                 )
             )

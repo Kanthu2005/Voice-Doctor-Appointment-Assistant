@@ -84,38 +84,51 @@ class VoicePipelineTests(unittest.IsolatedAsyncioTestCase):
             bad_config.validate_required_keys()
 
         app = create_app()
-        with TestClient(app) as client:
-            status_resp = client.get("/api/voice/status")
-            self.assertEqual(status_resp.status_code, 200)
-            payload = status_resp.json()
-            self.assertIn("configured", payload)
-            self.assertEqual(payload["stt_provider"], "elevenlabs_realtime")
-            self.assertEqual(payload["llm_provider"], "google_gemini")
-            self.assertEqual(payload["tts_provider"], "elevenlabs")
-            self.assertEqual(payload["vad_provider"], "silero")
-            self.assertEqual(payload["websocket_path"], "/ws/voice")
-            self.assertEqual(
-                set(payload.keys()),
-                {
-                    "configured",
-                    "missing_credentials",
-                    "stt_provider",
-                    "llm_provider",
-                    "tts_provider",
-                    "vad_provider",
-                    "transport",
-                    "websocket_path",
-                },
-            )
-            raw_text = json.dumps(payload)
-            self.assertNotIn("AIza", raw_text)
-            self.assertNotIn("sk_", raw_text)
+        fake_settings = Settings(
+            gemini_api_key="your_google_gemini_api_key_here",
+            elevenlabs_api_key="0123456789abcdef" * 4,
+            elevenlabs_voice_id="your_elevenlabs_voice_id_here",
+        )
+        from unittest.mock import patch
 
-            # Missing keys over WebSocket returns structured error without crashing
-            with client.websocket_connect("/ws/voice") as ws:
-                msg = json.loads(ws.receive_text())
-                self.assertEqual(msg["type"], "error")
-                self.assertTrue(msg["fatal"])
+        with patch("app.routes.voice.get_settings", return_value=fake_settings):
+            with TestClient(app) as client:
+                status_resp = client.get("/api/voice/status")
+                self.assertEqual(status_resp.status_code, 200)
+                payload = status_resp.json()
+                self.assertFalse(payload["configured"])
+                self.assertEqual(
+                    payload["missing_credentials"],
+                    ["GEMINI_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"],
+                )
+                self.assertEqual(payload["stt_provider"], "elevenlabs_realtime")
+                self.assertEqual(payload["llm_provider"], "google_gemini")
+                self.assertEqual(payload["tts_provider"], "elevenlabs")
+                self.assertEqual(payload["vad_provider"], "silero")
+                self.assertEqual(payload["websocket_path"], "/ws/voice")
+                self.assertEqual(
+                    set(payload.keys()),
+                    {
+                        "configured",
+                        "missing_credentials",
+                        "stt_provider",
+                        "llm_provider",
+                        "tts_provider",
+                        "vad_provider",
+                        "transport",
+                        "websocket_path",
+                    },
+                )
+                raw_text = json.dumps(payload)
+                self.assertNotIn("AIza", raw_text)
+                self.assertNotIn("sk_", raw_text)
+
+                # Missing/invalid keys over WebSocket returns structured error without crashing
+                with client.websocket_connect("/ws/voice") as ws:
+                    msg = json.loads(ws.receive_text())
+                    self.assertEqual(msg["type"], "error")
+                    self.assertTrue(msg["fatal"])
+                    self.assertIn("Key ID", msg["message"])
 
     async def test_browser_serializer_roundtrip(self) -> None:
         serializer = BrowserAudioJsonSerializer(sample_rate=16000)

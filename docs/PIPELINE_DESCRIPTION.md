@@ -65,7 +65,7 @@ sequenceDiagram
 - `UserTranscriptBridge` (`TranscriptBridgeProcessor`) forwards live VAD and STT transcript events to the frontend so the caller sees real-time speech transcription.
 
 ### 4. Conversational Reasoning & Function Calling (`GoogleLLMService` + `app/ai/tools.py`)
-- `GoogleLLMService` (`gemini-2.5-flash`, `temperature=0.2`) receives the conversation history from `LLMContext`, anchored by `build_system_prompt()`.
+- `GoogleLLMService` (`gemini-3.6-flash`, `temperature=0.2`) receives the conversation history from `LLMContext`, anchored by `build_system_prompt()`.
 - Three functions are registered via `ToolsSchema` and `llm.register_function(...)`:
   1. **`check_doctor_availability(doctor_name, speciality, appointment_date)`**: Queries SQLite via `doctor_service` for matching doctors and open slots.
   2. **`book_appointment(caller_phone, doctor_id, appointment_date, appointment_time, phone_confirmed)`**: Enforces phone confirmation (`phone_confirmed=True`), validates string phone numbers (preserving leading zeros and `+`), atomically claims the slot in SQLite, and inserts the appointment.

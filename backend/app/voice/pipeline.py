@@ -33,6 +33,7 @@ from app.voice.serializer import BrowserAudioJsonSerializer
 from app.voice.tools import build_pipecat_tools_schema, register_voice_tools
 
 _PLACEHOLDER_PREFIX = "your_"
+_PLACEHOLDER_EXACT = {"GEMINI_API_KEY", "ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"}
 
 
 class VoiceConfigurationError(RuntimeError):
@@ -41,7 +42,12 @@ class VoiceConfigurationError(RuntimeError):
 
 def _is_configured(value: str) -> bool:
     cleaned = (value or "").strip()
-    return bool(cleaned) and not cleaned.startswith(_PLACEHOLDER_PREFIX)
+    return bool(cleaned) and not cleaned.startswith(_PLACEHOLDER_PREFIX) and cleaned not in _PLACEHOLDER_EXACT
+
+
+def _looks_like_elevenlabs_key_id(value: str) -> bool:
+    cleaned = (value or "").strip()
+    return len(cleaned) == 64 and all(ch in "0123456789abcdefABCDEF" for ch in cleaned)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +61,7 @@ class VoicePipelineConfig:
     elevenlabs_stt_model: str
     elevenlabs_tts_model: str
     sample_rate: int = 16000
-    vad_stop_secs: float = 0.6
+    vad_stop_secs: float = 0.2
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "VoicePipelineConfig":
@@ -74,7 +80,9 @@ class VoicePipelineConfig:
         missing: list[str] = []
         if not _is_configured(self.gemini_api_key):
             missing.append("GEMINI_API_KEY")
-        if not _is_configured(self.elevenlabs_api_key):
+        if not _is_configured(self.elevenlabs_api_key) or _looks_like_elevenlabs_key_id(
+            self.elevenlabs_api_key
+        ):
             missing.append("ELEVENLABS_API_KEY")
         if not _is_configured(self.elevenlabs_voice_id):
             missing.append("ELEVENLABS_VOICE_ID")
@@ -82,6 +90,11 @@ class VoicePipelineConfig:
 
     def validate_required_keys(self) -> None:
         """Raise VoiceConfigurationError if required credentials are missing."""
+        if _looks_like_elevenlabs_key_id(self.elevenlabs_api_key):
+            raise VoiceConfigurationError(
+                "ELEVENLABS_API_KEY in backend/.env is a 64-character Key ID instead of an "
+                "ElevenLabs secret API key (which starts with 'sk_'). Replace it with your 'sk_...' key."
+            )
         missing = self.missing_fields()
         if missing:
             raise VoiceConfigurationError(
@@ -142,10 +155,13 @@ def build_voice_pipeline(
         ),
     )
 
+    system_prompt = build_system_prompt()
+
     llm = GoogleLLMService(
         api_key=config.gemini_api_key,
         settings=GoogleLLMService.Settings(
             model=config.gemini_model,
+            system_instruction=system_prompt,
             temperature=0.2,
         ),
     )
@@ -159,11 +175,9 @@ def build_voice_pipeline(
         ),
     )
 
-    system_prompt = build_system_prompt()
     tools = build_pipecat_tools_schema()
     context = LLMContext(
         messages=[
-            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": (
@@ -261,4 +275,5 @@ async def run_voice_session(
         allowed_origins=allowed_origins,
     )
     runner = PipelineRunner(handle_sigint=False, handle_sigterm=False)
-    await runner.run(bundle.worker)
+    runner.add_workers([bundle.worker])
+    await runner.run()

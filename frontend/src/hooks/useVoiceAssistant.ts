@@ -541,14 +541,6 @@ export function useVoiceAssistant(
     updateCallState("ending");
     appendSystemMessage(`Ending call (${formatDuration(durationRef.current)})...`);
 
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      try {
-        wsRef.current.send(JSON.stringify({ type: "hangup" }));
-      } catch {
-        // Ignore send errors during teardown.
-      }
-    }
-
     void releaseAllResources().then(() => {
       updateCallState("ended");
     });

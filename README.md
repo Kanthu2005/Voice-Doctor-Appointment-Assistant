@@ -58,7 +58,7 @@ Patients can interact directly with **Maya**, an AI medical receptionist, throug
 - **API Framework:** Python 3.14, FastAPI (`0.165.0`), Uvicorn (`0.54.0`), Pydantic v2
 - **Voice Orchestration:** Pipecat (`pipecat-ai[google,websocket] 1.17.0`), Silero VAD (`onnxruntime`)
 - **Speech-to-Text / Text-to-Speech:** ElevenLabs Realtime STT (`scribe_v2_realtime`) & ElevenLabs TTS (`eleven_turbo_v2_5`)
-- **LLM:** Google Gemini (`google-genai 3.6.1`, `gemini-2.5-flash`) with function calling
+- **LLM:** Google Gemini (`google-genai 3.6.1`, `gemini-3.6-flash`) with function calling
 - **Database:** SQLite with SQLAlchemy 2.1 (`asyncio` + `aiosqlite` + `greenlet`)
 
 ### Frontend
@@ -307,7 +307,7 @@ Set your credentials inside `backend/.env` (never commit `.env` files):
 
 ```env
 GEMINI_API_KEY=your_google_gemini_api_key_here
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.6-flash
 
 ELEVENLABS_API_KEY=your_elevenlabs_api_key_here
 ELEVENLABS_VOICE_ID=your_elevenlabs_voice_id_here
